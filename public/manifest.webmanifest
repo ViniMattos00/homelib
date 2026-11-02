@@ -1,0 +1,9 @@
+{
+  "name": "HomeLib",
+  "short_name": "HomeLib",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f3eadb",
+  "theme_color": "#5b1a24",
+  "icons": [{ "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
