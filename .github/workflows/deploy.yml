@@ -30,8 +30,9 @@ jobs:
           VITE_APPS_SCRIPT_URL: ${{ vars.VITE_APPS_SCRIPT_URL }}
           VITE_OPENAI_MODEL: ${{ vars.VITE_OPENAI_MODEL }}
           VITE_GOOGLE_BOOKS_KEY: ${{ vars.VITE_GOOGLE_BOOKS_KEY }}
-          # A chave da OpenAI NÃO é passada de propósito: tudo que é VITE_* fica
-          # embutido no JavaScript público do site. Veja o README antes de ativar.
+          # Atenção: tudo que é VITE_* fica embutido no JavaScript público do site.
+          # Use uma chave dedicada, com limite de gasto baixo.
+          VITE_OPENAI_API_KEY: ${{ secrets.VITE_OPENAI_API_KEY }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
