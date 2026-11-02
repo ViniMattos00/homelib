@@ -22,7 +22,7 @@ export default function Login() {
   return (
     <main className="login">
       <form className="card login-card" onSubmit={submit}>
-        <h1 className="brand big">HomeLib</h1>
+        <h1 className="brand big">Home<span>Lib</span></h1>
         <p className="muted center">Nossa biblioteca de casa</p>
         <label>
           Usuário
