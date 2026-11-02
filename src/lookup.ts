@@ -3,7 +3,6 @@ import { resizeImage } from './image'
 
 const OPENAI_KEY = import.meta.env.VITE_OPENAI_API_KEY
 const OPENAI_MODEL = import.meta.env.VITE_OPENAI_MODEL || 'gpt-4o-mini'
-const GB_KEY = import.meta.env.VITE_GOOGLE_BOOKS_KEY
 
 export const hasAI = Boolean(OPENAI_KEY)
 
@@ -14,125 +13,101 @@ export const GENRES = [
   'Poesia', 'Culinária', 'Arte', 'Outros',
 ]
 
-// A ordem importa: o primeiro padrão que casar define o gênero.
-const GENRE_RULES: [RegExp, string][] = [
-  [/fantasy|fantasia/i, 'Fantasia'],
-  [/science fiction|sci-fi|ficção científica/i, 'Ficção científica'],
-  [/horror|terror/i, 'Terror'],
-  [/mystery|thriller|crime|detective|suspense|mistério/i, 'Mistério e suspense'],
-  [/romance/i, 'Romance'],
-  [/comic|graphic novel|manga|quadrinhos/i, 'HQ e mangá'],
-  [/juvenile|young adult|children|infantil|juvenil/i, 'Infantojuvenil'],
-  [/adventure|aventura/i, 'Aventura'],
-  [/poetry|poesia|poems/i, 'Poesia'],
-  [/biograph|autobiograph|memoir/i, 'Biografia'],
-  [/history|história/i, 'História'],
-  [/self-help|autoajuda|personal development/i, 'Autoajuda'],
-  [/business|economics|finance|management|negócios/i, 'Negócios'],
-  [/computer|programming|technology|engineering/i, 'Tecnologia'],
-  [/psycholog/i, 'Psicologia'],
-  [/philosoph|filosofia/i, 'Filosofia'],
-  [/religio|spiritual|bible/i, 'Religião e espiritualidade'],
-  [/cooking|cookbook|culin/i, 'Culinária'],
-  [/science|nature|mathematic|medical/i, 'Ciências'],
-  [/art|music|photograph|design/i, 'Arte'],
-  [/fiction|literary|ficção|novel/i, 'Ficção'],
-]
+/** Schema de um livro, usado nas respostas estruturadas (Structured Outputs). */
+const BOOK_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['title', 'author', 'pages', 'genre', 'isbn'],
+  properties: {
+    title: { type: 'string', description: 'Título completo do livro, na edição em português quando existir.' },
+    author: { type: 'string', description: 'Autor(es), separados por vírgula.' },
+    pages: { type: 'integer', description: 'Número aproximado de páginas da edição mais comum. Use 0 se não souber.' },
+    genre: { type: 'string', enum: GENRES, description: 'Gênero principal do livro.' },
+    isbn: { type: 'string', description: 'ISBN-13 se tiver certeza; caso contrário, string vazia.' },
+  },
+} as const
 
-export function mapGenre(categories: string[] | undefined): string {
-  const text = (categories ?? []).join(' / ')
-  for (const [re, genre] of GENRE_RULES) if (re.test(text)) return genre
-  return 'Outros'
-}
+interface RawBook { title: string; author: string; pages: number; genre: string; isbn: string }
 
-interface GBVolume {
-  volumeInfo?: {
-    title?: string
-    subtitle?: string
-    authors?: string[]
-    pageCount?: number
-    categories?: string[]
-    imageLinks?: { thumbnail?: string; smallThumbnail?: string }
-    industryIdentifiers?: { type: string; identifier: string }[]
-  }
-}
+const toDraft = (b: RawBook): BookDraft => ({
+  title: b.title.trim(),
+  author: b.author.trim(),
+  pages: Math.max(0, Math.round(b.pages) || 0),
+  genre: GENRES.includes(b.genre) ? b.genre : 'Outros',
+  cover: '',
+  isbn: b.isbn.replace(/[^0-9Xx]/g, ''),
+})
 
-export async function searchBooks(query: string): Promise<BookDraft[]> {
-  const q = query.trim()
-  if (!q) return []
-  const params = new URLSearchParams({ q, maxResults: '8', printType: 'books' })
-  if (GB_KEY) params.set('key', GB_KEY)
-  const res = await fetch(`https://www.googleapis.com/books/v1/volumes?${params}`)
-  if (!res.ok) throw new Error('Falha ao consultar o Google Books. Você pode preencher manualmente.')
-  const json = (await res.json()) as { items?: GBVolume[] }
-  return (json.items ?? [])
-    .map((it) => it.volumeInfo)
-    .filter((v): v is NonNullable<GBVolume['volumeInfo']> => !!v?.title)
-    .map((v) => ({
-      title: v.title!,
-      author: (v.authors ?? []).join(', '),
-      pages: v.pageCount ?? 0,
-      genre: mapGenre(v.categories),
-      cover: (v.imageLinks?.thumbnail ?? v.imageLinks?.smallThumbnail ?? '').replace(/^http:/, 'https:'),
-      isbn:
-        v.industryIdentifiers?.find((i) => i.type === 'ISBN_13')?.identifier ??
-        v.industryIdentifiers?.[0]?.identifier ??
-        '',
-    }))
-}
-
-async function openai(messages: unknown[]): Promise<string> {
-  if (!OPENAI_KEY) throw new Error('Defina VITE_OPENAI_API_KEY no .env para usar IA.')
+async function openai<T>(schemaName: string, schema: object, messages: unknown[]): Promise<T> {
+  if (!OPENAI_KEY) throw new Error('Defina VITE_OPENAI_API_KEY para usar a busca por IA. Você pode preencher manualmente.')
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${OPENAI_KEY}` },
     body: JSON.stringify({
       model: OPENAI_MODEL,
       messages,
-      response_format: { type: 'json_object' },
       temperature: 0,
+      response_format: { type: 'json_schema', json_schema: { name: schemaName, strict: true, schema } },
     }),
   })
-  if (!res.ok) throw new Error(`OpenAI retornou erro ${res.status}`)
+  if (!res.ok) throw new Error(`A OpenAI retornou erro ${res.status}. Tente de novo ou preencha manualmente.`)
   const json = await res.json()
-  return json.choices?.[0]?.message?.content ?? '{}'
+  const message = json.choices?.[0]?.message
+  if (message?.refusal) throw new Error('A IA recusou o pedido.')
+  return JSON.parse(message?.content ?? '{}') as T
 }
 
-/** Lê a capa/lombada em uma foto e devolve título e autor. */
-export async function identifyFromPhoto(file: File): Promise<{ title: string; author: string; isbn: string }> {
-  const dataUrl = await resizeImage(file, 1024, 0.8)
-  const content = await openai([
-    {
-      role: 'system',
-      content:
-        'Você identifica livros a partir de fotos de capa ou lombada. Responda apenas JSON: {"title": string, "author": string, "isbn": string}. Use "" para o que não souber.',
-    },
-    {
-      role: 'user',
-      content: [
-        { type: 'text', text: 'Qual é o livro desta foto?' },
-        { type: 'image_url', image_url: { url: dataUrl } },
-      ],
-    },
-  ])
-  const parsed = JSON.parse(content)
-  return { title: parsed.title ?? '', author: parsed.author ?? '', isbn: parsed.isbn ?? '' }
-}
+const SYSTEM =
+  'Você é um bibliotecário especialista. Devolva dados bibliográficos reais e precisos. ' +
+  'Não invente livros: se não tiver certeza de um campo, use 0 em pages e "" em isbn.'
 
-/** Classifica o gênero com IA quando o Google Books não informa. */
-export async function classifyGenre(title: string, author: string): Promise<string> {
-  if (!hasAI) return 'Outros'
-  try {
-    const content = await openai([
+/** Busca livros por título, autor ou ISBN e devolve até 5 candidatos já estruturados. */
+export async function searchBooks(query: string): Promise<BookDraft[]> {
+  const q = query.trim()
+  if (!q) return []
+  const data = await openai<{ results: RawBook[] }>(
+    'book_candidates',
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['results'],
+      properties: { results: { type: 'array', maxItems: 5, items: BOOK_SCHEMA } },
+    },
+    [
+      { role: 'system', content: SYSTEM },
       {
-        role: 'system',
-        content: `Classifique o livro em exatamente um destes gêneros: ${GENRES.join(', ')}. Responda JSON: {"genre": string}.`,
+        role: 'user',
+        content: `Busca do usuário: "${q}"\nListe até 5 livros que melhor correspondem, do mais provável ao menos. Se for claramente um único livro, devolva apenas ele.`,
       },
-      { role: 'user', content: `Título: ${title}\nAutor: ${author}` },
-    ])
-    const g = JSON.parse(content).genre
-    return GENRES.includes(g) ? g : 'Outros'
-  } catch {
-    return 'Outros'
-  }
+    ],
+  )
+  return data.results.filter((b) => b.title.trim()).map(toDraft)
+}
+
+/** Identifica o livro de uma foto de capa/lombada e devolve os dados estruturados (ou null). */
+export async function identifyFromPhoto(file: File): Promise<BookDraft | null> {
+  const dataUrl = await resizeImage(file, 1024, 0.8)
+  const data = await openai<{ found: boolean; book: RawBook }>(
+    'book_from_photo',
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['found', 'book'],
+      properties: {
+        found: { type: 'boolean', description: 'false se a foto não mostra um livro identificável.' },
+        book: BOOK_SCHEMA,
+      },
+    },
+    [
+      { role: 'system', content: SYSTEM },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Identifique o livro desta foto (capa ou lombada) e preencha os dados.' },
+          { type: 'image_url', image_url: { url: dataUrl } },
+        ],
+      },
+    ],
+  )
+  return data.found && data.book.title.trim() ? toDraft(data.book) : null
 }

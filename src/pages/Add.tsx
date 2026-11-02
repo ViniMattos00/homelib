@@ -2,7 +2,7 @@ import { useRef, useState, type FormEvent } from 'react'
 import { useStore } from '../store'
 import BookForm from '../components/BookForm'
 import Cover from '../components/Cover'
-import { classifyGenre, hasAI, identifyFromPhoto, searchBooks } from '../lookup'
+import { hasAI, identifyFromPhoto, searchBooks } from '../lookup'
 import { emptyDraft, type BookDraft } from '../types'
 
 type Mode = 'text' | 'photo'
@@ -25,16 +25,14 @@ export default function Add({ initialDest = 'library', onDone }: { initialDest?:
     try { await fn() } catch (e) { setError((e as Error).message) } finally { setBusy(false); setStatus('') }
   }
 
-  const pick = async (b: BookDraft) => {
-    let genre = b.genre
-    if (genre === 'Outros' && hasAI) genre = await classifyGenre(b.title, b.author)
-    setDraft({ ...b, genre })
+  const pick = (b: BookDraft) => {
+    setDraft(b)
     setResults([])
   }
 
   const search = (e: FormEvent) => {
     e.preventDefault()
-    run('Buscando…', async () => {
+    run('Consultando a IA…', async () => {
       const r = await searchBooks(query)
       setResults(r)
       if (r.length === 0) setError('Nada encontrado. Preencha os dados manualmente abaixo.')
@@ -44,16 +42,10 @@ export default function Add({ initialDest = 'library', onDone }: { initialDest?:
   const onPhoto = (file?: File) => {
     if (!file) return
     run('Identificando o livro pela foto…', async () => {
-      const info = await identifyFromPhoto(file)
-      if (!info.title) throw new Error('Não consegui identificar o livro. Tente outra foto ou busque pelo texto.')
-      setQuery(`${info.title} ${info.author}`.trim())
-      const r = await searchBooks(info.isbn ? `isbn:${info.isbn}` : `intitle:${info.title} inauthor:${info.author}`)
-      if (r.length > 0) {
-        await pick(r[0])
-        setResults(r.slice(1))
-      } else {
-        setDraft({ ...emptyDraft(), title: info.title, author: info.author, genre: await classifyGenre(info.title, info.author) })
-      }
+      const book = await identifyFromPhoto(file)
+      if (!book) throw new Error('Não consegui identificar o livro. Tente outra foto ou busque pelo texto.')
+      setDraft(book)
+      setResults([])
     })
     if (fileRef.current) fileRef.current.value = ''
   }
@@ -85,7 +77,7 @@ export default function Add({ initialDest = 'library', onDone }: { initialDest?:
             value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Título, autor ou ISBN…"
             aria-label="Buscar livro"
           />
-          <button className="btn" disabled={busy || !query.trim()}>Buscar</button>
+          <button className="btn" disabled={busy || !query.trim() || !hasAI}>Buscar</button>
         </form>
       ) : hasAI ? (
         <div className="photo-box">
@@ -103,6 +95,12 @@ export default function Add({ initialDest = 'library', onDone }: { initialDest?:
         </p>
       )}
 
+      {mode === 'text' && !hasAI && (
+        <p className="error">
+          A busca automática usa a OpenAI e a chave não está configurada (<code>VITE_OPENAI_API_KEY</code>).
+          Preencha os dados manualmente abaixo.
+        </p>
+      )}
       {status && <p className="muted">{status}</p>}
       {error && <p className="error">{error}</p>}
 
@@ -123,6 +121,7 @@ export default function Add({ initialDest = 'library', onDone }: { initialDest?:
       )}
 
       <h2 className="group-title">Dados do livro</h2>
+      {draft.title && <p className="muted small">Dados sugeridos pela IA: confira páginas e gênero antes de salvar.</p>}
       <BookForm value={draft} onChange={setDraft} />
       <div className="actions">
         <button className="btn" disabled={busy || !draft.title.trim()} onClick={save}>

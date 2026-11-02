@@ -31,15 +31,14 @@ As variáveis `VITE_*` são embutidas **na hora do build**, então rode `npm run
 | Variável | Obrigatória | Para quê |
 |---|---|---|
 | `VITE_APPS_SCRIPT_URL` | sim | URL `/exec` do Apps Script |
-| `VITE_OPENAI_API_KEY` | não | Cadastro por foto e classificação de gênero quando o Google Books não informa |
+| `VITE_OPENAI_API_KEY` | para busca automática | Busca por texto e por foto (respostas estruturadas da OpenAI). Sem ela, o cadastro é manual |
 | `VITE_OPENAI_MODEL` | não | Modelo com visão (padrão `gpt-4o-mini`) |
-| `VITE_GOOGLE_BOOKS_KEY` | não | Aumenta a cota de busca do Google Books |
 
 ## Como funciona
 
-- **Cadastro por texto:** busca no Google Books (título, autor ou ISBN) e preenche título, autor, páginas, capa e gênero. Tudo é editável.
-- **Cadastro por foto:** a foto da capa vai para a OpenAI, que devolve título/autor; depois o Google Books completa os dados.
-- **Gênero automático:** vem das categorias do Google Books, mapeadas para gêneros em português (ou classificado pela OpenAI). A estante é agrupada por gênero.
+- **Cadastro por texto:** a OpenAI recebe a busca (título, autor ou ISBN) e devolve, em formato estruturado (JSON Schema), até 5 candidatos com título, autor, páginas, gênero e ISBN. Tudo é editável; páginas e ISBN podem vir aproximados, então confira. Não há capa automática.
+- **Cadastro por foto:** a foto da capa vai para a OpenAI, que devolve os mesmos campos estruturados.
+- **Gênero automático:** o modelo escolhe um gênero de uma lista fixa em português (o schema impede valores fora dela). A estante é agrupada por gênero.
 - **Leitura:** cada pessoa marca só o próprio "li"; o status da outra pessoa aparece no cartão.
 - **Perfil:** foto (redimensionada para caber na célula), nome, livros lidos; dá para ver o perfil do outro.
 - **Compartilhar:** envia um livro ao outro usuário (aba *Recebidos*), que pode mandar para a estante ou para "Quero ter".
@@ -56,7 +55,7 @@ O workflow `.github/workflows/deploy.yml` faz o build e publica o `dist/` a cada
 Configuração única no repositório:
 
 1. **Settings → Pages → Build and deployment → Source: GitHub Actions**.
-2. **Settings → Secrets and variables → Actions → Variables**: crie `VITE_APPS_SCRIPT_URL` (URL `/exec`). Opcionais: `VITE_OPENAI_MODEL`, `VITE_GOOGLE_BOOKS_KEY`.
+2. **Settings → Secrets and variables → Actions → Variables**: crie `VITE_APPS_SCRIPT_URL` (URL `/exec`). Opcional: `VITE_OPENAI_MODEL`.
 3. Rode o workflow em **Actions → Publicar no GitHub Pages → Run workflow** (ou faça um push). O site fica em `https://<usuario>.github.io/homelib/`.
 
 **Cadastro por foto no site publicado:** o workflow não repassa a chave da OpenAI, porque qualquer `VITE_*` é embutido no JavaScript público e ficaria visível para qualquer visitante. Sem a chave, a foto fica desativada no site publicado (continua funcionando local com `.env`). Se aceitar o risco, use uma chave dedicada com limite de gasto baixo e acrescente `VITE_OPENAI_API_KEY: ${{ secrets.VITE_OPENAI_API_KEY }}` no passo de build.
